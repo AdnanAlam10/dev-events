@@ -1,21 +1,15 @@
-export type EventStatus = "draft" | "pending" | "approved" | "rejected" | "cancelled";
-export type EventState = "upcoming" | "past" | "cancelled";
-export type SessionRole = "organizer" | "admin";
-
-export type SessionUser = {
-  id: string;
-  email: string;
-  role: SessionRole;
-};
+export type EventStatus = "upcoming" | "past" | "cancelled";
+export type ModerationStatus = "draft" | "pending" | "approved" | "rejected";
+export type EventSource = "demo" | "organizer";
 
 export type Speaker = {
   name: string;
-  title: string;
+  role: string;
   bio: string;
 };
 
 export type ScheduleItem = {
-  startsAt: string;
+  time: string;
   title: string;
   speaker?: string;
 };
@@ -26,29 +20,30 @@ export type Recording = {
 };
 
 export type EventRecord = {
-  id: string;
   slug: string;
   title: string;
-  summary: string;
   description: string;
+  overview: string;
   image: string;
   venue: string;
   location: string;
   startsAt: string;
   endsAt: string;
-  mode: "in-person" | "online" | "hybrid";
+  timezone: string;
+  mode: "online" | "offline" | "hybrid";
   audience: string;
   topics: string[];
   organizerId: string;
   organizerName: string;
-  sourceLabel: "First-party DEMO catalog";
-  verifiedAt: string;
-  freshnessDays: number;
-  status: EventStatus;
-  moderationNote?: string;
+  source: EventSource;
+  sourceLabel: string;
+  lastVerifiedAt: string;
+  freshUntil: string;
+  moderationStatus: ModerationStatus;
+  cancelledAt?: string;
+  cancellationReason?: string;
   capacity: number;
-  registrationCount: number;
-  attendeeListVisibility: "organizer-only";
+  registeredCount: number;
   speakers: Speaker[];
   schedule: ScheduleItem[];
   recordings: Recording[];
@@ -56,66 +51,41 @@ export type EventRecord = {
   updatedAt: string;
 };
 
-export type EventInput = Omit<
-  EventRecord,
-  | "id"
-  | "sourceLabel"
-  | "registrationCount"
-  | "attendeeListVisibility"
-  | "status"
-  | "moderationNote"
-  | "createdAt"
-  | "updatedAt"
->;
-
 export type RegistrationRecord = {
   id: string;
-  eventId: string;
+  eventSlug: string;
   name: string;
   email: string;
+  publicProfile: boolean;
+  reminderOptIn: boolean;
+  cancellationTokenHash: string;
   status: "active" | "cancelled";
   createdAt: string;
   cancelledAt?: string;
 };
 
-export type ReminderOutboxRecord = {
+export type SessionUser = {
   id: string;
-  registrationId: string;
-  eventId: string;
-  to: string;
-  kind: "event-reminder" | "registration-cancelled";
-  scheduledFor: string;
-  status: "pending" | "processing" | "sent" | "failed";
-  attempts: number;
-  createdAt: string;
-  sentAt?: string;
-  lastError?: string;
+  name: string;
+  email: string;
+  role: "organizer" | "admin";
 };
 
-export type EventQuery = {
+export type EventFilters = {
   search?: string;
   location?: string;
-  date?: string;
   topic?: string;
-  state?: EventState;
+  date?: string;
+  status?: EventStatus | "all";
   page?: number;
   pageSize?: number;
+  includeUnfresh?: boolean;
 };
 
-export type EventList = {
+export type EventPage = {
   items: EventRecord[];
   page: number;
   pageSize: number;
   total: number;
   totalPages: number;
 };
-
-export class DomainError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly status = 400,
-  ) {
-    super(message);
-  }
-}

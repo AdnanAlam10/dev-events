@@ -1,68 +1,93 @@
 # DevEvent
 
-DevEvent is a Next.js site for discovering developer-focused events. The home page presents the featured event catalog, and each event has a detail page at `/events/<slug>`.
+DevEvent is a developer-event discovery and free-registration portfolio application. It includes search, location/date/topic/state filters, paginated event discovery, rich event detail pages, calendar export, private attendee registration and cancellation, organizer CRUD, moderation, freshness enforcement, and organizer summaries.
 
-## Requirements
-
-- Node.js 24.x (the supported version is declared in `package.json`)
-- npm (the repository includes a lockfile)
+Every bundled listing and demo workflow is explicitly labeled **DEMO**. DevEvent does not ingest live third-party events, sell tickets, or represent that any demo listing will occur.
 
 ## Local setup
 
-Install the locked dependencies and start the development server:
+Requires Node.js 24.x and npm:
 
 ```bash
 npm ci
+# Create .env.local with the variables described below
 npm run dev
 ```
 
-Open <http://localhost:3000>.
+Open <http://localhost:3000>. Without `MONGODB_URI`, the app intentionally runs in ephemeral demo mode: state survives requests in one warm process but is not durable across restarts or serverless instances.
 
 Available scripts:
 
-- `npm run dev` — start Next.js in development mode
-- `npm run build` — create the optimized production build
-- `npm start` — serve the production build (run `npm run build` first)
-- `npm run lint` — run the repository ESLint configuration
+- `npm run dev` — start development mode
+- `npm run build` — create the production build
+- `npm start` — serve a production build
+- `npm run test:domain` — run focused authorization, capacity, cancellation, moderation, privacy, and freshness contracts
 
-## Data and environment variables
+## Demo access
 
-The currently released catalog is deliberately file-backed: featured events are defined in [`lib/constants.ts`](./lib/constants.ts). There is no seed script or remote event API, so the site can be built and deployed without a database. Update that file to change the featured catalog; event detail pages are generated from the same records.
+Open `/organizer`, select **Organizer** or **Moderator admin**, and enter the configured `DEMO_LOGIN_CODE`. The public portfolio deployment uses `DevEventDemo!2026`; this is intentionally a public demo code, not a production credential. Sessions are signed, HTTP-only, same-site cookies. Organizer mutations enforce ownership server-side and moderator actions enforce the admin role.
 
-The repository also contains reusable Mongoose models in `database/` and a cached connector in `lib/mongodb.ts` for a future data-backed workflow. Those modules are not imported by the current page routes. If server-side code starts using them, provide:
+New or organizer-edited events return to `pending` moderation. Approved future listings remain public for 90 days after organizer verification; stale future listings are hidden until reverification. Past approved listings remain archived, while cancelled approved listings remain visible with the cancellation reason.
+
+## Persistence and transactional registration
+
+The bundled dataset lives in `database/seed.ts` and is inserted idempotently through the Mongoose data layer when Atlas is configured. `database/service.ts` selects:
+
+- **MongoDB Atlas mode** when `MONGODB_URI` exists: durable events, registrations, privacy choices, capacity counts, and reminder/cancellation outbox records.
+- **Ephemeral demo mode** otherwise: the same domain behavior in a process-local repository, clearly disclosed in the interface.
+
+Atlas must be a transaction-capable replica set (Atlas clusters satisfy this). Mongoose creates the declared indexes, including unique event slugs, public discovery indexes, and the partial unique `{ eventSlug, email }` index for one active registration per attendee/event. Run the application against the target database once with an index-authorized database user, or call `syncIndexes()` in controlled provisioning, then verify these indexes in Atlas before accepting registrations.
+
+Atlas registration uses a transaction with an atomic `$expr: { $lt: [\"$registeredCount\", \"$capacity\"] }` reservation. Registration creation and reminder-outbox creation commit in the same transaction. Self-cancellation validates a hashed cancellation token, releases the capacity slot, and cancels any pending reminder in a transaction. Event cancellation queues attendee cancellation notices without exposing attendee email addresses to organizer analytics.
+
+## Reminder email
+
+Reminder and cancellation messages use a durable outbox and the Resend HTTP API. `/api/reminders/process` is protected by `CRON_SECRET`; `vercel.json` schedules it daily. A message is marked `sent` only after Resend returns success, and an idempotency key prevents duplicate sends during retries.
+
+Required production environment:
 
 ```dotenv
-MONGODB_URI=mongodb+srv://<user>:<password>@<cluster>/<database>
+MONGODB_URI=mongodb+srv://<user>:<password>@<transaction-capable-cluster>/<database>
+SESSION_SECRET=<at-least-32-random-bytes>
+DEMO_LOGIN_CODE=<public-demo-access-code>
+CRON_SECRET=<random-vercel-cron-secret>
+RESEND_API_KEY=re_...
+REMINDER_FROM_EMAIL=DevEvent Demo <events@verified-domain.example>
 ```
 
-Do not commit a real connection string. Use the corresponding secret in the deployment provider instead.
+`REMINDER_FROM_EMAIL` must use a sender/domain verified in the same Resend account. Store all values in the deployment provider, never in Git. If Atlas or Resend values are absent, the interface does not claim durable persistence or email delivery.
 
-PostHog error and product analytics are optional. Set the public project key to enable the client instrumentation:
+Optional client analytics:
 
 ```dotenv
 NEXT_PUBLIC_POSTHOG_KEY=phc_...
 ```
 
-When the key is absent, analytics is disabled and the application still runs normally. The PostHog proxy routes in `next.config.ts` are used only when analytics is enabled.
+## API surface
 
-## Production
+- `GET /api/events` — public filters and pagination
+- `POST /api/events` and `PATCH|DELETE /api/events/:slug` — authenticated organizer/admin CRUD, moderation, and cancellation
+- `POST|DELETE /api/events/:slug/registrations` — free registration and token-protected self-cancellation
+- `GET /api/events/:slug/calendar` — RFC 5545 calendar export with a local display alarm
+- `GET /api/organizer/analytics` — owner-scoped or admin summaries without attendee emails
+- `GET /api/reminders/process` — protected outbox delivery worker
 
-Build and run the same artifact locally before releasing:
+## Release checks
 
 ```bash
 npm ci
+npm run test:domain
 npm run build
 npm start
 ```
 
-The app is a standard Next.js App Router deployment. On Vercel, import this repository, keep the detected framework as **Next.js**, use `npm run build` as the build command, and set `NEXT_PUBLIC_POSTHOG_KEY` only if PostHog is required. No MongoDB configuration is needed for the current catalog-only routes; add `MONGODB_URI` only when database-backed routes are introduced.
-
-For another Node-compatible host, run `npm ci`, `npm run build`, and `npm start`, and expose the host's `PORT` (Next.js defaults to `3000`). Keep environment values in the host's secret/configuration store rather than in Git.
+Smoke the catalog search, event detail, organizer create/update/delete, attendee registration/self-cancellation, and `.ics` export against the built artifact. On Vercel, confirm the production deployment is Ready and repeat the primary path against the canonical URL.
 
 ## Project structure
 
-- `app/` — layouts, home page, and event detail routes
-- `components/` — shared navigation, event cards, and visual effects
-- `lib/constants.ts` — released featured-event data
-- `database/` — Mongoose models and exports for future server-side data access
+- `app/` — catalog, detail, organizer, and API routes
+- `components/` — discovery cards, registration, organizer console, navigation, and visual effects
+- `database/` — Mongoose models, explicit demo seed, durable adapter, ephemeral demo repository, and reminder worker
+- `lib/` — signed sessions, API error handling, and Mongo connection cache
+- `tests/domain.test.ts` — focused changed-contract tests
 - `public/` — event artwork and icons
